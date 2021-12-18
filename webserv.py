@@ -1,9 +1,11 @@
 import os
-import sys
 import argparse
 import logging
 
 import socket
+
+class RequestException(Exception):
+    pass
 
 class Webserv(object):
     def __init__(self, host, port):
@@ -19,21 +21,99 @@ class Webserv(object):
         while True:
             client_conn, client_addr = self.socket.accept()
             request = client_conn.recv(1024)
-            logging.info(request.decode('utf-8'))
+            response = ""
+            logging.debug(f"Accepted request from {client_addr}")
 
-            response = self.make_header('ok', 'text')
-            response += "HELLO WORLD!"
+            try:
+                req = self.interpret_request(request.decode('utf-8'))
+                logging.debug(f"[{req['req_type']}] - {req['url']} - {req['filetype']}")
+                response = self.make_header('ok', 'html')
+                response += self.open_file(req['url'])
+            except RequestException:
+                logging.error("Error with request")
+                response = self.make_header('bad-request', 'text')
+                response += "Bad request"
+            except FileNotFoundError:
+                logging.error("Error with request")
+                response = self.make_header('not-found', 'text')
+                response += "File not found"
+            except Exception:
+                logging.exception("Internal error")
+                response = self.make_header('internal-error', 'text')
+                response += "Internal error"
+            finally:
+                logging.debug(f"Sent: {response}")
+                client_conn.sendall(response.encode())
+                client_conn.close()
 
-            client_conn.sendall(response.encode())
-            logging.info(f"Sent: {response}")
-            client_conn.close()
+    def interpret_request(self, request):
+        # What a HTTP request looks like.
+        # > GET /index.html HTTP/1.1
+        # > Host: localhost:8080
+        # > User-Agent: curl/7.80.0
+        # > Accept: */*
+
+        req = request.split("\n")
+
+        # Get request type
+        req_type = req[0].split("/")[0][:-1]
+        req_type = self.get_http_verb(req_type)
+
+        if req_type is None:
+            raise RequestException("Invalid request type")
+
+        # Get URL
+        url = self.get_url(req[0])
+
+        # Get filetype
+        filetype = self.get_filetype(url)
+
+        return {
+            'req_type' : req_type,
+            'url'      : url,
+            'filetype' : filetype
+        }
+
+    def get_http_verb(self, req_type):
+        verbs = {'get', 'post', 'put', 'delete', 'patch'}
+        return req_type.upper() if req_type.lower() in verbs else None
+
+    def get_url(self, header):
+        # begins with /, ends with HTTP
+        return header[header.index(' /') + len(' /'):header.index('HTTP') - 1]
+
+    def get_filetype(self, url):
+        filetypes = {'html', 'json'}
+        ftype = url.split(".")[-1]
+        logging.debug(f"{ftype}")
+        return ftype if ftype in filetypes else 'text'
 
     def make_header(self, response_code, content_type):
+        # What we should make in return.
+        # < HTTP/1.1 200 OK
+        # < Content-Type: text/html;
         return "\n".join([
             "HTTP/1.1 " + self.get_response(response_code),
             self.get_content_type(content_type),
             "\n"
         ])
+
+    def open_file(self, url):
+        # On security:
+        # This oneliner should remove attempts at using ../../../ to serve files outside of scope.
+        path = os.path.relpath(os.path.normpath(os.path.join("/", url)), "/")
+
+        # For security reasons, we also don't serve up hidden files.
+        if path[0] == '.' and len(path) > 1:
+            raise RequestException(f"Hidden files are not served by default. {path}")
+
+        if path == '.':
+            path = 'index.html'
+
+        f = open(path, 'r')
+        contents = f.read()
+
+        return contents
 
     def get_response(self, code):
         responses = {
@@ -127,7 +207,7 @@ class Webserv(object):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='Terminal Application'
+        description='webserv.py - a toy web server'
     )
     parser.add_argument(
         '--verbose', '-v',
@@ -145,8 +225,12 @@ if __name__ == '__main__':
         default='localhost'
     )
     args = vars(parser.parse_args())
-    logging.basicConfig(level=logging.INFO)
+
+    if args['verbose']:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.ERROR)
 
     with Webserv(args['host'], args['port']) as w:
-        print(w)
+        logging.info(w)
         w.serve()
