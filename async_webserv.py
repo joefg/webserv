@@ -6,8 +6,6 @@ import logging
 import socket
 import asyncio
 
-# Socket instantiation and destruction.
-
 def setup(host, port):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -15,14 +13,12 @@ def setup(host, port):
     sock.setblocking(False)
     sock.listen(1)
     logging.info(f"Server created at {host}:{port}")
-    
+
     return sock
 
 def exit(sock):
     sock.close()
     logging.info(f"Server closed.")
-
-# Web helpers.
 
 def interpret_request(request):
     # What a HTTP request looks like.
@@ -168,8 +164,6 @@ def open_file(url):
 
     return contents
 
-# Async socket senders / receivers
-
 async def read_request(client):
     request = ''
     while True:
@@ -182,7 +176,7 @@ async def read_request(client):
 async def handle(client):
     request = await read_request(client)
     req = interpret_request(request)
-    
+
     try:
         response = make_header('ok', 'html')
         response += open_file(req['url'])
@@ -198,8 +192,6 @@ async def server(sock):
     while True:
         client, addr = await loop.sock_accept(sock)
         loop.create_task(handle(client))
-
-# Main
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
